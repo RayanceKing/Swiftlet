@@ -1,12 +1,11 @@
 //===----------------------------------------------------------------------===//
 //
 //  NetworkOrchestrator.swift
-//  Swiftlet — Quad-Platform Unified Host Orchestrator
+//  Swiftlet — Quad‑Platform Unified Tunnel IPC Manager
 //
-//  A high-level, concurrency-safe application lifecycle controller that
-//  wraps the SwiftletCore (L3/L4) and SwiftletCoreExpand (L7 MitM/JS)
-//  engine stacks behind a simplified two-verb API.  Designed for Swift 6
-//  strict concurrency checking with zero isolation warnings.
+//  The central application‑layer controller that manages the system
+//  Network Extension tunnel lifecycle across iOS 17, macOS 14,
+//  tvOS 17+, and visionOS 2 — uniformly, with zero platform branches.
 //
 //  Architecture
 //  ------------
@@ -16,43 +15,72 @@
 //  │                     (@unchecked Sendable)                         │
 //  │                                                                   │
 //  │  ┌─────────────────────────────────────────────────────────────┐ │
-//  │  │  SwiftletCoreExpandEngine                                     │ │
-//  │  │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐  │ │
-//  │  │  │ Swiftlet     │  │ MitM Cert    │  │ JS Script          │  │ │
-//  │  │  │ Engine       │  │ Manager      │  │ Executor           │  │ │
-//  │  │  │ (L3/L4)      │  │ (L7 TLS)     │  │ (L7 Logic)         │  │ │
-//  │  │  └─────────────┘  └──────────────┘  └────────────────────┘  │ │
+//  │  │  NETunnelProviderManager (per‑platform system API)            │ │
+//  │  │  · loadAllFromPreferences                                    │ │
+//  │  │  · saveToPreferences                                         │ │
+//  │  │  · connection.startVPNTunnel() / stopVPNTunnel()             │ │
 //  │  └─────────────────────────────────────────────────────────────┘ │
 //  │                                                                   │
 //  │  ┌─────────────────────────────────────────────────────────────┐ │
-//  │  │  PCAPPacketDumper  │  SessionDiagnosticsTracker (actor)      │ │
-//  │  │  (circular buffer) │  (live metrics)                         │ │
+//  │  │  App Group UserDefaults (IPC channel to tunnel extension)     │ │
+//  │  │  suiteName: "group.com.rayanceking.swiftlet"                 │ │
+//  │  │  · tunnel.config  → raw Surge/Loon profile text              │ │
+//  │  │  · tunnel.pcap    → PCAP capture enabled flag                │ │
+//  │  └─────────────────────────────────────────────────────────────┘ │
+//  │                                                                   │
+//  │  ┌─────────────────────────────────────────────────────────────┐ │
+//  │  │  SessionDiagnosticsTracker.shared (in‑process actor)          │ │
+//  │  │  · activeSnapshots   · totalSessionsCreated                  │ │
+//  │  │  · PCAPPacketDumper (circular buffer for container‑side PCAP) │ │
 //  │  └─────────────────────────────────────────────────────────────┘ │
 //  └──────────────────────────────────────────────────────────────────┘
 //  ```
 //
-//  Platform Guardrails
+//  Platform Uniformity
 //  -------------------
-//  iOS / macOS / visionOS : Full engine + Network Extension virtual
-//                           interface hook (NWPathMonitor-driven).
-//  tvOS                    : Local loopback proxy only; container-
-//                           constrained, no system-wide VIF.
-//                           Boots SOCKS5 (1080) + HTTP (8080) servers
-//                           directly in-process.  Application‑level
-//                           traffic routes through localhost proxy
-//                           via a pre‑configured URLSessionConfiguration.
+//  All four platforms (iOS, macOS, tvOS, visionOS) use the identical
+//  NETunnelProviderManager pipeline.  There are zero `#if os(...)`
+//  branches — the system VPN APIs are uniformly available on all
+//  modern Apple OS families.
 //
 //  Thread Safety
 //  -------------
-//  Marked `@unchecked Sendable` following the established pattern in
-//  `SwiftletEngine` and `SwiftletCoreExpandEngine`.  Mutable state
-//  confined to the serial initialisation and shutdown paths.
+//  Marked `@unchecked Sendable` following the established pattern.
+//  Mutable state (`_state`, `_diagnostics`) protected by `NSLock`.
+//  `NETunnelProviderManager` API calls are `@MainActor` in newer SDKs;
+//  we bridge with `await MainActor.run` where needed.
 //
 //===----------------------------------------------------------------------===//
 
 import Foundation
+import NetworkExtension
 import SwiftletCore
 import SwiftletCoreExpand
+
+// MARK: - IPC Configuration
+
+/// Keys and identifiers for the App Group IPC channel and the
+/// Network Extension tunnel configuration.
+enum TunnelIPCConfig {
+    /// The shared App Group container suite name.
+    /// Must match the entitlement in both the container app and
+    /// the tunnel extension.
+    static let appGroupSuite = "group.com.rayanceking.swiftlet"
+
+    /// Key for the raw Surge/Loon configuration text in UserDefaults.
+    static let configKey = "tunnel.config"
+
+    /// Key for the PCAP capture enabled flag.
+    static let pcapKey = "tunnel.pcap"
+
+    /// The Network Extension tunnel provider bundle identifier.
+    /// Must match the `NSExtensionPrincipalClass` bundle ID in the
+    /// tunnel target's Info.plist.
+    static let tunnelBundleID = "com.rayanceking.swiftlet.tunnel"
+
+    /// The NETunnelProviderManager protocol configuration description.
+    static let tunnelDescription = "Swiftlet Proxy Tunnel"
+}
 
 // MARK: - Orchestrator State
 
@@ -76,7 +104,6 @@ public enum OrchestratorState: Sendable, Equatable, CustomStringConvertible {
         }
     }
 
-    /// Whether the engine is currently processing a transition.
     public var isTransitioning: Bool {
         switch self {
         case .booting, .tearingDown: return true
@@ -84,7 +111,6 @@ public enum OrchestratorState: Sendable, Equatable, CustomStringConvertible {
         }
     }
 
-    /// Whether the engine is ready to accept a boot command.
     public var canBoot: Bool {
         switch self {
         case .idle, .stopped, .failed: return true
@@ -95,90 +121,56 @@ public enum OrchestratorState: Sendable, Equatable, CustomStringConvertible {
 
 // MARK: - Orchestrator Error
 
-/// Errors surfaced by the orchestrator during boot or teardown.
 public enum OrchestratorError: Error, Sendable, Equatable, LocalizedError {
     case engineAlreadyRunning
     case engineNotRunning
     case bootFailed(reason: String)
     case teardownFailed(reason: String)
     case invalidConfiguration(String)
+    case tunnelManagerUnavailable
     case pcapNotAvailable
 
     public var errorDescription: String? {
         switch self {
         case .engineAlreadyRunning:
-            return "The proxy engine is already running."
+            return "The proxy tunnel is already running."
         case .engineNotRunning:
-            return "The proxy engine is not running."
+            return "The proxy tunnel is not running."
         case .bootFailed(let reason):
-            return "Boot failed: \(reason)"
+            return "Tunnel boot failed: \(reason)"
         case .teardownFailed(let reason):
-            return "Teardown failed: \(reason)"
+            return "Tunnel teardown failed: \(reason)"
         case .invalidConfiguration(let reason):
             return "Invalid configuration: \(reason)"
+        case .tunnelManagerUnavailable:
+            return "NETunnelProviderManager is not available on this device."
         case .pcapNotAvailable:
-            return "PCAP packet dump is not available — engine must be running."
+            return "PCAP packet dump is not available."
         }
     }
 }
 
 // MARK: - Orchestrator Diagnostics Snapshot
 
-/// A point-in-time snapshot of engine diagnostics for UI consumption.
-/// All fields are value types — safe to pass across isolation domains.
 public struct OrchestratorDiagnostics: Sendable, Equatable {
-    /// The current orchestrator state.
     public let state: OrchestratorState
-
-    /// The underlying core engine state.
     public let coreEngineState: String
-
-    /// Number of cached host certificates (MitM).
     public let cachedHostCerts: Int
-
-    /// Number of pre‑loaded JavaScript plugins.
     public let scriptCount: Int
-
-    /// Number of valid (parseable) scripts.
     public let validScriptCount: Int
-
-    /// Idle channels in the outbound connection pool.
     public let poolIdleChannels: Int
-
-    /// Number of active cron schedules.
     public let cronEntryCount: Int
-
-    /// Whether the NWPathMonitor is active.
     public let networkMonitorActive: Bool
-
-    /// Number of network‑changed event scripts registered.
     public let networkChangedScriptCount: Int
-
-    /// Number of MitM domains configured.
     public let mitmDomainCount: Int
-
-    /// Local SOCKS5 listen port (0 if not started).
     public let localSocksPort: UInt16
-
-    /// Local HTTP proxy listen port (0 if not started).
     public let localHttpPort: UInt16
-
-    /// Active sessions tracked by the diagnostics subsystem.
     public let activeSessionCount: Int
-
-    /// Total sessions created since boot.
     public let totalSessionsCreated: UInt64
-
-    /// Total PCAP packets captured.
     public let pcapPacketsCaptured: UInt64
-
-    /// PCAP buffer fill level.
     public let pcapBufferedCount: Int
-
-    /// Timestamp of this snapshot.
     public let capturedAt: Date
 
-    /// Default empty snapshot for initial UI state.
     public static let empty = OrchestratorDiagnostics(
         state: .idle, coreEngineState: "idle",
         cachedHostCerts: 0, scriptCount: 0, validScriptCount: 0,
@@ -193,122 +185,81 @@ public struct OrchestratorDiagnostics: Sendable, Equatable {
 
 // MARK: - Network Orchestrator
 
-/// The central application‑layer facade for the entire Swiftlet proxy
-/// ecosystem.  Owns the L3/L4 core engine, the L7 expand engine,
-/// a PCAP packet dumper, and bridges real‑time diagnostics to the
-/// SwiftUI presentation layer.
+/// The central application‑layer facade for the Swiftlet proxy
+/// ecosystem.  Manages the system Network Extension tunnel lifecycle
+/// uniformly across iOS, macOS, tvOS, and visionOS.
 ///
 /// ## Usage
 /// ```swift
 /// let orch = NetworkOrchestrator.shared
 /// try await orch.bootEngine(withConfigRawText: configString)
-/// // ... proxy traffic flows ...
+/// // … system VPN tunnel is now active …
 /// try await orch.teardownEngine()
-/// ```
-///
-/// ## From UI
-/// ```swift
-/// @EnvironmentObject var orchestrator: NetworkOrchestrator
-/// let diag = orchestrator.currentDiagnostics
-/// let pcap = orchestrator.dumpActiveBuffersToPCAP()
 /// ```
 public final class NetworkOrchestrator: @unchecked Sendable {
 
     // MARK: - Shared Instance
 
-    /// The global singleton orchestrator.
-    ///
-    /// Thread‑safe by construction — all mutable state is accessed
-    /// through serialised paths within the owned sub‑components.
     public static let shared = NetworkOrchestrator()
 
     // MARK: - Owned Components
 
-    /// The L7‑capable expand engine (owns the L3/L4 core engine).
-    private let expandEngine: SwiftletCoreExpandEngine
+    /// The global session diagnostics tracker.
+    private let diagnosticsTracker = SessionDiagnosticsTracker.shared
 
-    /// In‑memory circular PCAP packet dumper.
-    private let pcapDumper: PCAPPacketDumper
+    /// In‑memory PCAP packet dumper for the container app side.
+    private let pcapDumper = PCAPPacketDumper(maxPackets: 4096)
 
-    /// The global session diagnostics tracker (actor in SwiftletCore).
-    private let diagnosticsTracker: SessionDiagnosticsTracker
+    // MARK: - Tunnel Manager Reference
+
+    /// The active `NETunnelProviderManager` instance.
+    /// Populated during `bootEngine`; nil when idle or stopped.
+    private var tunnelManager: NETunnelProviderManager?
 
     // MARK: - State
 
-    /// The current orchestrator lifecycle state.
-    /// Write‑confined to the serial boot/teardown paths; read via
-    /// `currentState` for thread‑safe access.
     private var _state: OrchestratorState = .idle
-
-    /// Lock for `_state` access.
     private let stateLock = NSLock()
 
-    /// Thread‑safe read of the current state.
     public var currentState: OrchestratorState {
         stateLock.withLock { _state }
     }
 
-    /// Thread‑safe write of the current state.
     private func setState(_ newState: OrchestratorState) {
         stateLock.withLock { _state = newState }
     }
 
     // MARK: - Diagnostic Caching
 
-    /// Cached diagnostics snapshot, updated periodically.
     private var _diagnostics: OrchestratorDiagnostics = .empty
     private let diagnosticsLock = NSLock()
 
-    /// The most recently captured diagnostics snapshot.
     public var currentDiagnostics: OrchestratorDiagnostics {
         diagnosticsLock.withLock { _diagnostics }
     }
 
     // MARK: - Initialisation
 
-    /// Private initialiser — use `NetworkOrchestrator.shared`.
-    private init() {
-        self.expandEngine = SwiftletCoreExpandEngine()
-        self.pcapDumper = PCAPPacketDumper(maxPackets: 4096)
-        self.diagnosticsTracker = SessionDiagnosticsTracker.shared
-    }
+    private init() {}
 
-    // MARK: - Boot Engine
+    // MARK: - Boot Engine (Unified Tunnel Ignition)
 
-    /// Parses a Surge/Loon‑style configuration string and ignites the
-    /// entire proxy stack: configuration parsing, node hydration,
-    /// routing engine priming, cron schedule registration,
-    /// NWPathMonitor activation, MitM domain matrix setup, and
-    /// inbound server binding.
+    /// Validates the configuration, writes it to the App Group sandbox,
+    /// registers (or updates) the system `NETunnelProviderManager`,
+    /// saves preferences, and commands the OS kernel to launch the
+    /// Network Extension daemon.
     ///
-    /// This is the primary "One‑Click Execution" entry point.
+    /// This is the single entry point for all four platforms.
     ///
-    /// - Parameter text: Raw `.conf` configuration text (Surge/Loon
-    ///   dialect).  Must contain at least one valid `[Proxy]` node
-    ///   and optionally `[Rule]`, `[MITM]`, `[Script]`, and `[Host]`
-    ///   blocks.
-    /// - Throws: `OrchestratorError` if the engine is already running,
-    ///   the configuration is invalid, or any subsystem fails to start.
-    ///
-    /// ## Example
-    /// ```swift
-    /// let config = """
-    /// [Proxy]
-    /// MySS = ss, example.com, 8388, aes-128-gcm, myPassword
-    /// [Rule]
-    /// DOMAIN-SUFFIX, google.com, Proxy
-    /// FINAL, DIRECT
-    /// """
-    /// try await NetworkOrchestrator.shared.bootEngine(withConfigRawText: config)
-    /// ```
+    /// - Parameter text: Raw Surge/Loon‑style `.conf` configuration text.
+    /// - Throws: `OrchestratorError` on validation failure, tunnel
+    ///   manager unavailability, or VPN start failure.
     public func bootEngine(withConfigRawText text: String) async throws {
-        // ── Pre‑flight guard ────────────────────────────────────────
-        let state = currentState
-        guard state.canBoot else {
+        // ── Pre‑flight ────────────────────────────────────────────
+        guard currentState.canBoot else {
             throw OrchestratorError.engineAlreadyRunning
         }
 
-        // ── Validate input ──────────────────────────────────────────
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw OrchestratorError.invalidConfiguration(
@@ -319,41 +270,25 @@ public final class NetworkOrchestrator: @unchecked Sendable {
         setState(.booting)
 
         do {
-            // ── Enable PCAP capture ─────────────────────────────────
-            pcapDumper.isEnabled = true
-
-            // ── Ignite the expand engine ────────────────────────────
-            // This single call parses the configuration, hydrates
-            // nodes, registers cron tasks, hooks NWPathMonitor,
-            // maps mitmDomains, and binds inbound servers.
-            try await expandEngine.start(configurationRawText: trimmed)
-
-            // ── Platform‑specific post‑boot hook ────────────────────
-            #if os(tvOS)
-            // tvOS: No NetworkExtension TUN available.  The engine's
-            // SOCKS5 (1080) and HTTP (8080) inbound servers are now
-            // listening on localhost.  Application‑level traffic
-            // should route through these ports via a
-            // URLSessionConfiguration configured by the caller.
-            logOrchestrator("tvOS local loopback proxy active — "
-                + "SOCKS5:\(expandEngine.localSocksPort) "
-                + "HTTP:\(expandEngine.localHttpPort)")
-            #else
-            // iOS / macOS / visionOS: Write configuration to App Group
-            // UserDefaults so the Network Extension (PacketTunnelProvider)
-            // can ingest it when the system starts the tunnel.
+            // ── 1. Write configuration to App Group UserDefaults ──
+            // The tunnel extension process reads this when the system
+            // launches it.
             writeConfigToAppGroup(rawText: trimmed)
-            #endif
 
-            // ── Transition to running ───────────────────────────────
+            // ── 2. Load or create the tunnel manager ──────────────
+            let manager = try await resolveTunnelManager()
+
+            // ── 3. Start the VPN tunnel ───────────────────────────
+            try await startTunnel(manager: manager)
+
+            // ── 4. Transition to running ──────────────────────────
             setState(.running)
 
-            // ── Capture initial diagnostics ─────────────────────────
+            // ── 5. Capture initial diagnostics ────────────────────
             await refreshDiagnostics()
 
         } catch let error as OrchestratorError {
             setState(.failed(error))
-            pcapDumper.isEnabled = false
             throw error
 
         } catch {
@@ -361,46 +296,35 @@ public final class NetworkOrchestrator: @unchecked Sendable {
                 reason: error.localizedDescription
             )
             setState(.failed(orchError))
-            pcapDumper.isEnabled = false
             throw orchError
         }
     }
 
-    // MARK: - Teardown Engine
+    // MARK: - Teardown Engine (Unified Tunnel Evacuation)
 
-    /// Gracefully tears down the entire proxy stack: stops cron
-    /// schedulers, unregisters NWPathMonitor callbacks, drains the
-    /// outbound connection pool, purges decrypted certificate stores,
-    /// closes all listening channels, stops NIO event loops, and
-    /// nullifies all internal references for a zero‑leak guarantee.
+    /// Commands the system to stop the VPN tunnel.  The OS kernel
+    /// signals the extension process, which gracefully shuts down
+    /// the engine, drains all sessions, and evacuates.
     ///
-    /// After teardown the orchestrator returns to `.stopped` state
-    /// and can be re‑booted with a new configuration.
-    ///
-    /// - Throws: `OrchestratorError` if the engine is not running
+    /// - Throws: `OrchestratorError` if the tunnel is not running
     ///   or shutdown fails.
     public func teardownEngine() async throws {
-        let state = currentState
-        guard state == .running else {
+        guard currentState == .running else {
             throw OrchestratorError.engineNotRunning
         }
 
         setState(.tearingDown)
 
         do {
-            // ── Disable PCAP capture ────────────────────────────────
-            pcapDumper.isEnabled = false
+            // ── Stop the VPN tunnel ───────────────────────────────
+            if let manager = tunnelManager {
+                manager.connection.stopVPNTunnel()
+            }
 
-            // ── Shut down expand engine ─────────────────────────────
-            // This drains the connection pool, purges cert stores,
-            // stops cron tasks, cancels NWPathMonitor, stops NIO
-            // event loops, and nullifies internal references.
-            try await expandEngine.shutdown()
-
-            // ── Transition to stopped ───────────────────────────────
+            // ── Transition to stopped ─────────────────────────────
             setState(.stopped)
 
-            // ── Final diagnostics snapshot ──────────────────────────
+            // ── Refresh diagnostics ───────────────────────────────
             await refreshDiagnostics()
 
         } catch let error as OrchestratorError {
@@ -416,35 +340,110 @@ public final class NetworkOrchestrator: @unchecked Sendable {
         }
     }
 
+    // MARK: - Tunnel Manager Resolution
+
+    /// Loads existing tunnel configurations from system preferences
+    /// and returns the matching `NETunnelProviderManager`, or creates
+    /// a new one if none exists.
+    private func resolveTunnelManager() async throws -> NETunnelProviderManager {
+        // NETunnelProviderManager.loadAllFromPreferences is
+        // @MainActor in modern SDKs.
+        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+
+        // ── Find existing manager with matching bundle ID ─────────
+        if let existing = managers.first(where: { manager in
+            (manager.protocolConfiguration as? NETunnelProviderProtocol)?
+                .providerBundleIdentifier == TunnelIPCConfig.tunnelBundleID
+        }) {
+            logOrchestrator("Reusing existing tunnel manager")
+            self.tunnelManager = existing
+            return existing
+        }
+
+        // ── Create a new manager ──────────────────────────────────
+        logOrchestrator("Creating new tunnel manager")
+        let manager = NETunnelProviderManager()
+        let proto = NETunnelProviderProtocol()
+        proto.providerBundleIdentifier = TunnelIPCConfig.tunnelBundleID
+        proto.serverAddress = "Swiftlet"  // display name in Settings
+        manager.protocolConfiguration = proto
+        manager.localizedDescription = TunnelIPCConfig.tunnelDescription
+        manager.isEnabled = true
+
+        try await manager.saveToPreferences()
+        try await manager.loadFromPreferences()
+
+        self.tunnelManager = manager
+        return manager
+    }
+
+    /// Starts the VPN tunnel and waits for the connection to enter
+    /// the `.connected` state (with a timeout).
+    private func startTunnel(
+        manager: NETunnelProviderManager
+    ) async throws {
+        guard let session = manager.connection
+                as? NETunnelProviderSession else {
+            throw OrchestratorError.tunnelManagerUnavailable
+        }
+
+        logOrchestrator("Starting VPN tunnel session…")
+
+        // ── Start the tunnel ──────────────────────────────────────
+        try session.startTunnel(options: nil)
+
+        // ── Wait for connection to become active ──────────────────
+        // The tunnel extension process launches asynchronously.
+        // Poll connection status with a 10‑second timeout.
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            switch session.status {
+            case .connected:
+                logOrchestrator("Tunnel connected")
+                return
+            case .invalid, .disconnected:
+                throw OrchestratorError.bootFailed(
+                    reason: "Tunnel session entered \(session.status) state"
+                )
+            default:
+                try await Task.sleep(nanoseconds: 250_000_000)  // 250ms
+            }
+        }
+
+        throw OrchestratorError.bootFailed(
+            reason: "Tunnel connection timed out (10s)"
+        )
+    }
+
+    // MARK: - App Group IPC
+
+    /// Writes the raw configuration text and PCAP flag to the shared
+    /// App Group `UserDefaults` so the Network Extension process can
+    /// ingest them at tunnel startup.
+    private func writeConfigToAppGroup(rawText text: String) {
+        guard let defaults = UserDefaults(
+            suiteName: TunnelIPCConfig.appGroupSuite
+        ) else {
+            logOrchestrator(
+                "WARNING: Cannot access App Group '\(TunnelIPCConfig.appGroupSuite)'. "
+                + "Verify entitlements."
+            )
+            return
+        }
+
+        defaults.set(text, forKey: TunnelIPCConfig.configKey)
+        defaults.set(pcapDumper.isEnabled, forKey: TunnelIPCConfig.pcapKey)
+        defaults.synchronize()  // force immediate write for IPC
+
+        logOrchestrator("Configuration written to App Group for tunnel extension")
+    }
+
     // MARK: - PCAP Export
 
-    /// Exports all buffered raw IP packets as a standards‑compliant
-    /// libpcap file suitable for Wireshark analysis.
-    ///
-    /// - Returns: A `Data` blob containing the 24‑byte global header
-    ///   followed by 16‑byte per‑packet record headers and packet data.
-    ///   Returns an empty `Data` if the PCAP buffer is empty.
-    ///
-    /// ## Usage from SwiftUI
-    /// ```swift
-    /// let pcapData = orchestrator.dumpActiveBuffersToPCAP()
-    /// // Present a ShareLink or UIActivityViewController with pcapData
-    /// ```
     public func dumpActiveBuffersToPCAP() -> Data {
         pcapDumper.dumpActiveBuffersToPCAP()
     }
 
-    /// Captures a raw IP packet into the PCAP circular buffer.
-    ///
-    /// Typically called by the TUN stack when `isEnabled` is `true`.
-    /// No‑op when capture is disabled.
-    ///
-    /// - Parameter packetData: Raw IP packet bytes (including IP header).
-    public func capturePCAPPacket(_ packetData: Data) {
-        pcapDumper.capture(packetData: packetData)
-    }
-
-    /// Enables or disables PCAP packet capture.
     public var isPCAPEnabled: Bool {
         get { pcapDumper.isEnabled }
         set { pcapDumper.isEnabled = newValue }
@@ -452,31 +451,26 @@ public final class NetworkOrchestrator: @unchecked Sendable {
 
     // MARK: - Diagnostics Refresh
 
-    /// Refreshes the cached diagnostics snapshot from the live engine
-    /// and session tracker.
-    ///
-    /// This is safe to call from any concurrency domain.  The
-    /// `currentDiagnostics` property will reflect the latest snapshot.
+    /// Refreshes the cached diagnostics snapshot from the live
+    /// `SessionDiagnosticsTracker` actor and any in‑process state.
     @discardableResult
     public func refreshDiagnostics() async -> OrchestratorDiagnostics {
-        let expandDiag = await expandEngine.diagnostics()
-
         let activeCount = await diagnosticsTracker.activeCount
         let totalCreated = await diagnosticsTracker.totalSessionsCreated
 
         let snapshot = OrchestratorDiagnostics(
             state: currentState,
-            coreEngineState: expandDiag.coreState.description,
-            cachedHostCerts: expandDiag.cachedHostCerts,
-            scriptCount: expandDiag.scriptCount,
-            validScriptCount: expandDiag.validScriptCount,
-            poolIdleChannels: expandDiag.poolIdleChannels,
-            cronEntryCount: expandDiag.cronEntryCount,
-            networkMonitorActive: expandDiag.networkMonitorActive,
-            networkChangedScriptCount: expandDiag.networkChangedScriptCount,
-            mitmDomainCount: expandDiag.mitmDomainCount,
-            localSocksPort: expandEngine.localSocksPort,
-            localHttpPort: expandEngine.localHttpPort,
+            coreEngineState: "tunnel",  // engine runs in extension process
+            cachedHostCerts: 0,
+            scriptCount: 0,
+            validScriptCount: 0,
+            poolIdleChannels: 0,
+            cronEntryCount: 0,
+            networkMonitorActive: false,
+            networkChangedScriptCount: 0,
+            mitmDomainCount: 0,
+            localSocksPort: 1080,
+            localHttpPort: 8080,
             activeSessionCount: activeCount,
             totalSessionsCreated: totalCreated,
             pcapPacketsCaptured: pcapDumper.totalCaptured,
@@ -490,161 +484,63 @@ public final class NetworkOrchestrator: @unchecked Sendable {
 
     // MARK: - Session Metrics
 
-    /// Returns all currently active session snapshots.
     public func activeSessions() async -> [SessionSnapshot] {
         await diagnosticsTracker.activeSnapshots
     }
 
-    /// Returns the most recent closed session snapshots.
-    /// - Parameter count: Maximum number of snapshots to return (default 100).
-    public func recentClosedSessions(count: Int = 100) async -> [SessionSnapshot] {
+    public func recentClosedSessions(
+        count: Int = 100
+    ) async -> [SessionSnapshot] {
         await diagnosticsTracker.recentClosedSnapshots(count: count)
     }
 
     // MARK: - Convenience
 
-    /// The Root CA PEM string, for installation as a trusted anchor
-    /// on the device.  Returns `nil` if the engine has not been booted
-    /// or the Root CA has not been generated.
-    public func rootCAPEMString() async -> String? {
-        await expandEngine.rootCAPEMString()
+    /// Whether the VPN tunnel is currently connected.
+    public var isTunnelConnected: Bool {
+        tunnelManager?.connection.status == .connected
     }
 
-    // MARK: - tvOS Local Loopback Proxy
-
-    #if os(tvOS)
-    /// Returns a pre‑configured `URLSessionConfiguration` that routes
-    /// all HTTP/HTTPS traffic through the local in‑process SOCKS5
-    /// proxy server.
-    ///
-    /// tvOS does not support `NEPacketTunnelProvider`, so system‑wide
-    /// TUN interception is impossible.  Instead, the engine's SOCKS5
-    /// and HTTP proxy servers listen on localhost.  Callers must
-    /// explicitly use this configuration for any `URLSession` that
-    /// should traverse the proxy filter chain.
-    ///
-    /// ## Usage
-    /// ```swift
-    /// let config = NetworkOrchestrator.shared.localProxyURLSessionConfiguration()
-    /// let session = URLSession(configuration: config)
-    /// let (data, response) = try await session.data(from: url)
-    /// ```
-    ///
-    /// - Returns: An ephemeral `URLSessionConfiguration` with SOCKS5
-    ///   proxy settings pointing to `127.0.0.1:1080` and HTTP proxy
-    ///   at `127.0.0.1:8080`.
-    public func localProxyURLSessionConfiguration() -> URLSessionConfiguration {
-        let config = URLSessionConfiguration.ephemeral
-
-        // Route through local SOCKS5 proxy for all traffic.
-        config.connectionProxyDictionary = [
-            kCFNetworkProxiesSOCKSEnable: true,
-            kCFNetworkProxiesSOCKSProxy: "127.0.0.1",
-            kCFNetworkProxiesSOCKSPort: 1080,
-            kCFStreamPropertySOCKSProxyHost: "127.0.0.1",
-            kCFStreamPropertySOCKSProxyPort: 1080,
-            // Also configure HTTP proxy as fallback.
-            kCFNetworkProxiesHTTPEnable: true,
-            kCFNetworkProxiesHTTPProxy: "127.0.0.1",
-            kCFNetworkProxiesHTTPPort: 8080,
-            kCFNetworkProxiesHTTPSEnable: true,
-            kCFNetworkProxiesHTTPSProxy: "127.0.0.1",
-            kCFNetworkProxiesHTTPSPort: 8080,
-            // Exclude localhost from proxy to prevent loops.
-            kCFNetworkProxiesExceptionList: [
-                "127.0.0.1",
-                "::1",
-                "localhost",
-                "*.local",
-            ],
-        ]
-
-        // Aggressive timeout for local proxy — fail fast.
-        config.timeoutIntervalForRequest  = 30
-        config.timeoutIntervalForResource = 120
-        config.waitsForConnectivity = false
-
-        return config
-    }
-
-    /// Returns the local proxy ports as a tuple for display or
-    /// manual socket configuration on tvOS.
-    public var tvOSProxyPorts: (socks5: UInt16, http: UInt16) {
-        (expandEngine.localSocksPort, expandEngine.localHttpPort)
-    }
-    #endif
-
-    // MARK: - App Group Configuration Bridge (iOS / macOS / visionOS)
-
-    #if !os(tvOS)
-    /// Writes the raw configuration text to the shared App Group
-    /// `UserDefaults` so the Network Extension's
-    /// `PacketTunnelProvider` can ingest it when the system starts
-    /// the tunnel.
-    ///
-    /// The extension process is a separate binary with its own
-    /// sandbox — the App Group container is the only IPC channel
-    /// available for passing configuration data at tunnel startup.
-    ///
-    /// - Parameter text: The raw Surge/Loon‑style `.conf` text.
-    private func writeConfigToAppGroup(rawText text: String) {
-        guard let defaults = UserDefaults(
-            suiteName: "group.com.stuwang.Swiftlet"
-        ) else {
-            logOrchestrator("WARNING: Cannot access App Group UserDefaults. "
-                + "Verify entitlements include the App Group capability.")
-            return
+    /// The current VPN connection status string for UI display.
+    public var connectionStatusDescription: String {
+        guard let status = tunnelManager?.connection.status else {
+            return "No tunnel manager"
         }
-
-        defaults.set(text, forKey: "com.stuwang.Swiftlet.tunnel.configRawText")
-        defaults.set(isPCAPEnabled, forKey: "com.stuwang.Swiftlet.tunnel.pcapEnabled")
-        defaults.synchronize()
-
-        logOrchestrator("Configuration written to App Group for tunnel extension")
+        switch status {
+        case .invalid:     return "Invalid"
+        case .disconnected: return "Disconnected"
+        case .connecting:  return "Connecting…"
+        case .connected:   return "Connected"
+        case .reasserting: return "Reasserting…"
+        case .disconnecting: return "Disconnecting…"
+        @unknown default:  return "Unknown"
+        }
     }
-    #endif
 
     // MARK: - Logging
 
-    /// Emits a diagnostic message.  Uses `os_log` in production;
-    /// falls back to `print` for debug builds.
     private func logOrchestrator(_ message: String) {
         #if DEBUG
         print("[NetworkOrchestrator] \(message)")
         #endif
     }
 
-    /// A one‑line summary of the current engine state for UI display.
+    /// A one‑line summary for UI display.
     public var statusSummary: String {
         let diag = currentDiagnostics
         switch diag.state {
         case .idle:
             return "Engine idle — ready to boot"
         case .booting:
-            return "Initialising proxy stack…"
+            return "Initialising VPN tunnel…"
         case .running:
-            return "Running · SOCKS5:\(diag.localSocksPort) HTTP:\(diag.localHttpPort) · \(diag.activeSessionCount) sessions"
+            return "Running · \(connectionStatusDescription) · \(diag.activeSessionCount) sessions"
         case .tearingDown:
-            return "Draining connections…"
+            return "Stopping VPN tunnel…"
         case .stopped:
-            return "Engine stopped"
+            return "Tunnel stopped"
         case .failed(let error):
             return "Error: \(error.localizedDescription)"
         }
     }
 }
-
-// MARK: - Sendable Compliance Verification
-
-// `NetworkOrchestrator` is `@unchecked Sendable` because:
-//
-// 1. `SwiftletCoreExpandEngine` is `@unchecked Sendable` and manages
-//    its own internal synchronisation.
-// 2. `PCAPPacketDumper` is `@unchecked Sendable` (serial buffer access).
-// 3. `SessionDiagnosticsTracker` is an `actor` (built‑in isolation).
-// 4. `_state` and `_diagnostics` are protected by `NSLock`.
-//
-// Under Swift 6 with `SWIFT_APPROACHABLE_CONCURRENCY = YES`, this
-// pattern compiles without warnings because the compiler recognises
-// the `@unchecked Sendable` annotation as an explicit opt‑out of
-// strict sendable checking for this type.

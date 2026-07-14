@@ -108,14 +108,9 @@ fileprivate struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Button("Copy Root CA PEM to Clipboard") {
-                    Task {
-                        if let pem = await NetworkOrchestrator.shared.rootCAPEMString() {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(pem, forType: .string)
-                        }
-                    }
-                }
+                Text("Root CA management is handled by the tunnel extension process. Install the Root CA certificate from the extension's diagnostics via IPC.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Divider()
 
