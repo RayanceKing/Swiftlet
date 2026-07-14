@@ -37,6 +37,10 @@
 //                           interface hook (NWPathMonitor-driven).
 //  tvOS                    : Local loopback proxy only; container-
 //                           constrained, no system-wide VIF.
+//                           Boots SOCKS5 (1080) + HTTP (8080) servers
+//                           directly in-process.  Application‑level
+//                           traffic routes through localhost proxy
+//                           via a pre‑configured URLSessionConfiguration.
 //
 //  Thread Safety
 //  -------------
@@ -324,6 +328,23 @@ public final class NetworkOrchestrator: @unchecked Sendable {
             // maps mitmDomains, and binds inbound servers.
             try await expandEngine.start(configurationRawText: trimmed)
 
+            // ── Platform‑specific post‑boot hook ────────────────────
+            #if os(tvOS)
+            // tvOS: No NetworkExtension TUN available.  The engine's
+            // SOCKS5 (1080) and HTTP (8080) inbound servers are now
+            // listening on localhost.  Application‑level traffic
+            // should route through these ports via a
+            // URLSessionConfiguration configured by the caller.
+            logOrchestrator("tvOS local loopback proxy active — "
+                + "SOCKS5:\(expandEngine.localSocksPort) "
+                + "HTTP:\(expandEngine.localHttpPort)")
+            #else
+            // iOS / macOS / visionOS: Write configuration to App Group
+            // UserDefaults so the Network Extension (PacketTunnelProvider)
+            // can ingest it when the system starts the tunnel.
+            writeConfigToAppGroup(rawText: trimmed)
+            #endif
+
             // ── Transition to running ───────────────────────────────
             setState(.running)
 
@@ -487,6 +508,110 @@ public final class NetworkOrchestrator: @unchecked Sendable {
     /// or the Root CA has not been generated.
     public func rootCAPEMString() async -> String? {
         await expandEngine.rootCAPEMString()
+    }
+
+    // MARK: - tvOS Local Loopback Proxy
+
+    #if os(tvOS)
+    /// Returns a pre‑configured `URLSessionConfiguration` that routes
+    /// all HTTP/HTTPS traffic through the local in‑process SOCKS5
+    /// proxy server.
+    ///
+    /// tvOS does not support `NEPacketTunnelProvider`, so system‑wide
+    /// TUN interception is impossible.  Instead, the engine's SOCKS5
+    /// and HTTP proxy servers listen on localhost.  Callers must
+    /// explicitly use this configuration for any `URLSession` that
+    /// should traverse the proxy filter chain.
+    ///
+    /// ## Usage
+    /// ```swift
+    /// let config = NetworkOrchestrator.shared.localProxyURLSessionConfiguration()
+    /// let session = URLSession(configuration: config)
+    /// let (data, response) = try await session.data(from: url)
+    /// ```
+    ///
+    /// - Returns: An ephemeral `URLSessionConfiguration` with SOCKS5
+    ///   proxy settings pointing to `127.0.0.1:1080` and HTTP proxy
+    ///   at `127.0.0.1:8080`.
+    public func localProxyURLSessionConfiguration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+
+        // Route through local SOCKS5 proxy for all traffic.
+        config.connectionProxyDictionary = [
+            kCFNetworkProxiesSOCKSEnable: true,
+            kCFNetworkProxiesSOCKSProxy: "127.0.0.1",
+            kCFNetworkProxiesSOCKSPort: 1080,
+            kCFStreamPropertySOCKSProxyHost: "127.0.0.1",
+            kCFStreamPropertySOCKSProxyPort: 1080,
+            // Also configure HTTP proxy as fallback.
+            kCFNetworkProxiesHTTPEnable: true,
+            kCFNetworkProxiesHTTPProxy: "127.0.0.1",
+            kCFNetworkProxiesHTTPPort: 8080,
+            kCFNetworkProxiesHTTPSEnable: true,
+            kCFNetworkProxiesHTTPSProxy: "127.0.0.1",
+            kCFNetworkProxiesHTTPSPort: 8080,
+            // Exclude localhost from proxy to prevent loops.
+            kCFNetworkProxiesExceptionList: [
+                "127.0.0.1",
+                "::1",
+                "localhost",
+                "*.local",
+            ],
+        ]
+
+        // Aggressive timeout for local proxy — fail fast.
+        config.timeoutIntervalForRequest  = 30
+        config.timeoutIntervalForResource = 120
+        config.waitsForConnectivity = false
+
+        return config
+    }
+
+    /// Returns the local proxy ports as a tuple for display or
+    /// manual socket configuration on tvOS.
+    public var tvOSProxyPorts: (socks5: UInt16, http: UInt16) {
+        (expandEngine.localSocksPort, expandEngine.localHttpPort)
+    }
+    #endif
+
+    // MARK: - App Group Configuration Bridge (iOS / macOS / visionOS)
+
+    #if !os(tvOS)
+    /// Writes the raw configuration text to the shared App Group
+    /// `UserDefaults` so the Network Extension's
+    /// `PacketTunnelProvider` can ingest it when the system starts
+    /// the tunnel.
+    ///
+    /// The extension process is a separate binary with its own
+    /// sandbox — the App Group container is the only IPC channel
+    /// available for passing configuration data at tunnel startup.
+    ///
+    /// - Parameter text: The raw Surge/Loon‑style `.conf` text.
+    private func writeConfigToAppGroup(rawText text: String) {
+        guard let defaults = UserDefaults(
+            suiteName: "group.com.stuwang.Swiftlet"
+        ) else {
+            logOrchestrator("WARNING: Cannot access App Group UserDefaults. "
+                + "Verify entitlements include the App Group capability.")
+            return
+        }
+
+        defaults.set(text, forKey: "com.stuwang.Swiftlet.tunnel.configRawText")
+        defaults.set(isPCAPEnabled, forKey: "com.stuwang.Swiftlet.tunnel.pcapEnabled")
+        defaults.synchronize()
+
+        logOrchestrator("Configuration written to App Group for tunnel extension")
+    }
+    #endif
+
+    // MARK: - Logging
+
+    /// Emits a diagnostic message.  Uses `os_log` in production;
+    /// falls back to `print` for debug builds.
+    private func logOrchestrator(_ message: String) {
+        #if DEBUG
+        print("[NetworkOrchestrator] \(message)")
+        #endif
     }
 
     /// A one‑line summary of the current engine state for UI display.

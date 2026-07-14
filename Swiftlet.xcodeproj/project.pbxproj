@@ -6,6 +6,12 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		45B3CAEA30060B0D00957D09 /* SwiftletCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4547BFA00000000000000003 /* SwiftletCore */; };
+		45B3CAEB30060B0D00957D09 /* SwiftletCoreExpand in Frameworks */ = {isa = PBXBuildFile; productRef = 4547BFA00000000000000004 /* SwiftletCoreExpand */; };
+		45B3CB0C30060B2D00957D09 /* tunnel.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 45B3CB0330060B2D00957D09 /* tunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		4547BF3030054936001496CD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,12 +27,32 @@
 			remoteGlobalIDString = 4547BF1D30054935001496CD;
 			remoteInfo = Swiftlet;
 		};
+		45B3CB0A30060B2D00957D09 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4547BF1630054935001496CD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 45B3CB0230060B2D00957D09;
+			remoteInfo = tunnel;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		45B3CB1130060B2D00957D09 /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolder = Product;
+			files = (
+				45B3CB0C30060B2D00957D09 /* tunnel.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		4547BF1E30054935001496CD /* Swiftlet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Swiftlet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4547BF2F30054936001496CD /* SwiftletTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwiftletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4547BF3930054936001496CD /* SwiftletUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwiftletUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		45B3CB0330060B2D00957D09 /* tunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = tunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,6 +62,13 @@
 				Info.plist,
 			);
 			target = 4547BF1D30054935001496CD /* Swiftlet */;
+		};
+		45B3CB1030060B2D00957D09 /* Exceptions for "tunnel" folder in "tunnel" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 45B3CB0230060B2D00957D09 /* tunnel */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -58,12 +91,22 @@
 			path = SwiftletUITests;
 			sourceTree = "<group>";
 		};
+		45B3CB0430060B2D00957D09 /* tunnel */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				45B3CB1030060B2D00957D09 /* Exceptions for "tunnel" folder in "tunnel" target */,
+			);
+			path = tunnel;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		4547BF1B30054935001496CD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				45B3CAEB30060B0D00957D09 /* SwiftletCoreExpand in Frameworks */,
+				45B3CAEA30060B0D00957D09 /* SwiftletCore in Frameworks */,
 			);
 		};
 		4547BF2C30054936001496CD /* Frameworks */ = {
@@ -72,6 +115,11 @@
 			);
 		};
 		4547BF3630054936001496CD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		45B3CB0030060B2D00957D09 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -85,6 +133,7 @@
 				4547BF2030054935001496CD /* Swiftlet */,
 				4547BF3230054936001496CD /* SwiftletTests */,
 				4547BF3C30054936001496CD /* SwiftletUITests */,
+				45B3CB0430060B2D00957D09 /* tunnel */,
 				4547BF1F30054935001496CD /* Products */,
 			);
 			sourceTree = "<group>";
@@ -95,6 +144,7 @@
 				4547BF1E30054935001496CD /* Swiftlet.app */,
 				4547BF2F30054936001496CD /* SwiftletTests.xctest */,
 				4547BF3930054936001496CD /* SwiftletUITests.xctest */,
+				45B3CB0330060B2D00957D09 /* tunnel.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -109,8 +159,12 @@
 				4547BF1A30054935001496CD /* Sources */,
 				4547BF1B30054935001496CD /* Frameworks */,
 				4547BF1C30054935001496CD /* Resources */,
+				45B3CB1130060B2D00957D09 /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
+			);
+			dependencies = (
+				45B3CB0B30060B2D00957D09 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				4547BF2030054935001496CD /* Swiftlet */,
@@ -166,6 +220,24 @@
 			productReference = 4547BF3930054936001496CD /* SwiftletUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		45B3CB0230060B2D00957D09 /* tunnel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 45B3CB0D30060B2D00957D09 /* Build configuration list for PBXNativeTarget "tunnel" */;
+			buildPhases = (
+				45B3CAFF30060B2D00957D09 /* Sources */,
+				45B3CB0030060B2D00957D09 /* Frameworks */,
+				45B3CB0130060B2D00957D09 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				45B3CB0430060B2D00957D09 /* tunnel */,
+			);
+			name = tunnel;
+			productName = tunnel;
+			productReference = 45B3CB0330060B2D00957D09 /* tunnel.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -186,6 +258,9 @@
 					4547BF3830054936001496CD = {
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 4547BF1D30054935001496CD;
+					};
+					45B3CB0230060B2D00957D09 = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -210,6 +285,7 @@
 				4547BF1D30054935001496CD /* Swiftlet */,
 				4547BF2E30054936001496CD /* SwiftletTests */,
 				4547BF3830054936001496CD /* SwiftletUITests */,
+				45B3CB0230060B2D00957D09 /* tunnel */,
 			);
 		};
 /* End PBXProject section */
@@ -226,6 +302,11 @@
 			);
 		};
 		4547BF3730054936001496CD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		45B3CB0130060B2D00957D09 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -248,6 +329,11 @@
 			files = (
 			);
 		};
+		45B3CAFF30060B2D00957D09 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -261,31 +347,12 @@
 			target = 4547BF1D30054935001496CD /* Swiftlet */;
 			targetProxy = 4547BF3A30054936001496CD /* PBXContainerItemProxy */;
 		};
+		45B3CB0B30060B2D00957D09 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 45B3CB0230060B2D00957D09 /* tunnel */;
+			targetProxy = 45B3CB0A30060B2D00957D09 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		4547BFA00000000000000001 /* XCLocalSwiftPackageReference "../SwiftletCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../SwiftletCore;
-		};
-		4547BFA00000000000000002 /* XCLocalSwiftPackageReference "../SwiftletCoreExpand" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../SwiftletCoreExpand;
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		4547BFA00000000000000003 /* SwiftletCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4547BFA00000000000000001 /* XCLocalSwiftPackageReference "../SwiftletCore" */;
-			productName = SwiftletCore;
-		};
-		4547BFA00000000000000004 /* SwiftletCoreExpand */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4547BFA00000000000000002 /* XCLocalSwiftPackageReference "../SwiftletCoreExpand" */;
-			productName = SwiftletCoreExpand;
-		};
-/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		4547BF4130054936001496CD /* Debug configuration for PBXNativeTarget "Swiftlet" */ = {
@@ -318,8 +385,8 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.Swiftlet;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.swiftlet;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -367,8 +434,8 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.Swiftlet;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.swiftlet;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -604,6 +671,89 @@
 			};
 			name = Release;
 		};
+		45B3CB0E30060B2D00957D09 /* Debug configuration for PBXNativeTarget "tunnel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H2NS3XTS96;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = tunnel/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = tunnel;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.swiftlet.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,3,7";
+				TVOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_TVOS_DEPLOYMENT_TARGET)";
+				XROS_DEPLOYMENT_TARGET = "$(RECOMMENDED_XROS_DEPLOYMENT_TARGET)";
+			};
+			name = Debug;
+		};
+		45B3CB0F30060B2D00957D09 /* Release configuration for PBXNativeTarget "tunnel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H2NS3XTS96;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = tunnel/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = tunnel;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stuwang.swiftlet.tunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,3,7";
+				TVOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_TVOS_DEPLOYMENT_TARGET)";
+				VALIDATE_PRODUCT = YES;
+				XROS_DEPLOYMENT_TARGET = "$(RECOMMENDED_XROS_DEPLOYMENT_TARGET)";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -639,7 +789,39 @@
 			);
 			defaultConfigurationName = Release;
 		};
+		45B3CB0D30060B2D00957D09 /* Build configuration list for PBXNativeTarget "tunnel" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				45B3CB0E30060B2D00957D09 /* Debug configuration for PBXNativeTarget "tunnel" */,
+				45B3CB0F30060B2D00957D09 /* Release configuration for PBXNativeTarget "tunnel" */,
+			);
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4547BFA00000000000000001 /* XCLocalSwiftPackageReference "../SwiftletCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../SwiftletCore;
+		};
+		4547BFA00000000000000002 /* XCLocalSwiftPackageReference "../SwiftletCoreExpand" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../SwiftletCoreExpand;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4547BFA00000000000000003 /* SwiftletCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4547BFA00000000000000001 /* XCLocalSwiftPackageReference "../SwiftletCore" */;
+			productName = SwiftletCore;
+		};
+		4547BFA00000000000000004 /* SwiftletCoreExpand */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4547BFA00000000000000002 /* XCLocalSwiftPackageReference "../SwiftletCoreExpand" */;
+			productName = SwiftletCoreExpand;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 4547BF1630054935001496CD /* Project object */;
 	validationLevel = 1;
